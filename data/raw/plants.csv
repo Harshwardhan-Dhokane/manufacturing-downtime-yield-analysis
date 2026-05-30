@@ -1,0 +1,26 @@
+plant_id,plant_name,city,state,region,is_active
+PLT01,Delhi Plant 01,Delhi,DL,North,Y
+PLT02,Delhi Plant 02,Delhi,DL,North,Y
+PLT03,Delhi Plant 03,Delhi,DL,North,Y
+PLT04,Chennai Plant 04,Chennai,TN,South,Y
+PLT05,Ahmedabad Plant 05,Ahmedabad,GJ,West,Y
+PLT06,Bengaluru Plant 06,Bengaluru,KA,South,Y
+PLT07,Indore Plant 07,Indore,MP,Central,Y
+PLT08,Bhopal Plant 08,Bhopal,MP,Central,Y
+PLT09,Ahmedabad Plant 09,Ahmedabad,GJ,,Y
+PLT10,Ahmedabad Plant 10,Ahmedabad,GJ,West,Y
+PLT11,Hyderabad Plant 11,Hyderabad,TS,,Y
+PLT12,Delhi Plant 12,Delhi,DL,North,Y
+PLT13,Ahmedabad Plant 13,Ahmedabad,GJ,West,Y
+PLT14,Patna Plant 14,Patna,BR,East,Y
+PLT15,Ahmedabad Plant 15,Ahmedabad,GJ,West,Y
+PLT16,Lucknow Plant 16,Lucknow,UP,North,Y
+PLT17,Patna Plant 17,Patna,BR,East,Y
+PLT18,Bhopal Plant 18,Bhopal,MP,,Y
+PLT19,Indore Plant 19,Indore,MP,Central,Y
+PLT20,Delhi Plant 20,Delhi,DL,North,Y
+PLT21,Delhi Plant 21,Delhi,DL,North,N
+PLT22,Chennai Plant 22,Chennai,TN,South,Y
+PLT23,Delhi Plant 23,Delhi,DL,North,Y
+PLT24,Lucknow Plant 24,Lucknow,UP,North,Y
+PLT25,Bhopal Plant 25,Bhopal,MP,Central,Y

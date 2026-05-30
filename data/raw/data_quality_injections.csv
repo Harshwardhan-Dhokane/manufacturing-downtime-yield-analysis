@@ -1,0 +1,6 @@
+issue_type,affected_table,affected_columns,severity,description
+NULL_PLACEHOLDERS,"production_batches, machine_downtime, machines, plants, shift_calendar","plant_id, machine_id, shift_id, downtime_reason, quantities",High,"NULL/blank/N/A/UNKNOWN placeholders injected in keys, reasons, and quantity fields."
+DUPLICATES,"production_batches, machine_downtime","batch_id, downtime_id",High,Late-resend duplicates injected with different created_ts to enforce dedup keep-latest logic.
+MIXED_TYPES,"production_batches, machine_downtime","total_qty/good_qty/scrap_qty, downtime_minutes",High,Numeric fields stored as strings/blanks injected to enforce type coercion.
+LOGICAL_ANOMALIES,"production_batches, machine_downtime","end_ts < start_ts, downtime_end_ts < downtime_start_ts, scrap_qty > total_qty, negative totals",High,Time order violations and invalid quantity relationships injected for validation and exclusion policies.
+OUTLIERS,"machine_downtime, production_batches","downtime_minutes, scrap_qty/total_qty",Medium,Extreme downtime durations and abnormal scrap proportions injected to test outlier detection.
