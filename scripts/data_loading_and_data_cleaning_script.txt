@@ -1,0 +1,486 @@
+SET ThousandSep=',';
+SET DecimalSep='.';
+SET MoneyThousandSep=',';
+SET MoneyDecimalSep='.';
+SET MoneyFormat='$#,##0.00;-$#,##0.00';
+SET TimeFormat='h:mm:ss TT';
+SET DateFormat='M/D/YYYY';
+SET TimestampFormat='M/D/YYYY h:mm:ss[.fff] TT';
+SET FirstWeekDay=6;
+SET BrokenWeeks=1;
+SET ReferenceDay=0;
+SET FirstMonthOfYear=1;
+SET CollationLocale='en-US';
+SET CreateSearchIndexOnReload=1;
+SET MonthNames='Jan;Feb;Mar;Apr;May;Jun;Jul;Aug;Sep;Oct;Nov;Dec';
+SET LongMonthNames='January;February;March;April;May;June;July;August;September;October;November;December';
+SET DayNames='Mon;Tue;Wed;Thu;Fri;Sat;Sun';
+SET LongDayNames='Monday;Tuesday;Wednesday;Thursday;Friday;Saturday;Sunday';
+SET NumericalAbbreviation='3:k;6:M;9:G;12:T;15:P;18:E;21:Z;24:Y;-3:m;-6:μ;-9:n;-12:p;-15:f;-18:a;-21:z;-24:y';
+
+
+
+
+[DimDate]:
+LOAD
+    Date(
+        Num(Date#("date", 'YYYY-MM-DD')),
+        'DD/MM/YYYY'
+    ) as date,
+
+    date_key,
+    "year",
+    "month",
+    month_name,
+    week_of_year,
+    day_name,
+    is_weekend
+FROM [lib://Capstone Details/calendar.csv]
+(txt, codepage is 28591, embedded labels, delimiter is ',', msq);
+
+
+
+
+[Plants_Raw]:
+LOAD
+    plant_id,
+    plant_name,
+    city,
+    state,
+    region,
+    is_active as Is_Active
+FROM [lib://Capstone Details/plants.csv]
+(txt, codepage is 28591, embedded labels, delimiter is ',', msq);
+
+
+StateRegionMap:
+MAPPING LOAD DISTINCT
+    state,
+    region
+RESIDENT Plants_Raw
+WHERE Len(Trim(region)) > 0;
+
+NoConcatenate
+[DimPlant]:
+LOAD
+    plant_id,
+    plant_name,
+    city,
+    state,
+    If(
+        Upper(Trim(state)) = 'TS',
+        'South',
+        If(
+            Len(Trim(region)) = 0,
+            ApplyMap('StateRegionMap', state),
+            region
+        )
+    ) as region,
+    Is_Active
+RESIDENT Plants_Raw;
+
+DROP TABLE Plants_Raw;
+
+
+
+[DimMachine]:
+LOAD
+    machine_id,
+    machine_name, 
+    // Replacing blank, 'NA', or 'UNKNOWN' plant_id with 'UNKNOWN'
+    IF(
+        LEN(TRIM(plant_id)) = 0 OR
+        UPPER(TRIM(plant_id)) = 'N/A' OR
+        UPPER(TRIM(plant_id)) = 'UNKNOWN',
+        'UNKNOWN',
+        plant_id
+    ) AS plant_id,
+    line_name,
+    machine_type,
+    is_active
+FROM [lib://Capstone Details/machines.csv]
+(txt, codepage is 28591, embedded labels, delimiter is ',', msq);
+
+
+
+
+
+[Production Batches]:
+LOAD
+    batch_id,
+    If(IsNull(plant_id) OR Len(Trim(plant_id))=0 OR Upper(plant_id)='N/A' 
+    OR Upper(plant_id)='NULL', 'UNKNOWN', plant_id) as [Production_Batches.plant_id],
+    
+    If(IsNull(machine_id) OR Len(Trim(machine_id))=0 OR Upper(machine_id)='N/A' 
+    OR Upper(machine_id)='NULL', 'UNKNOWN', machine_id) as [Production_Batches.machine_id],
+    
+    If(IsNull(shift_id) OR Len(Trim(shift_id))=0 OR Upper(shift_id)='N/A' 
+    OR Upper(shift_id)='NULL', 'UNKNOWN', shift_id) as [Production_Batches.shift_id],
+   
+    Date(
+        Alt(
+            Date#(batch_date, 'D/M/YYYY'),
+            Date#(batch_date, 'M/D/YYYY'),
+            Date#(batch_date, 'YYYY-MM-DD') // Added to handle ISO format often found in CSVs
+        ),
+        'DD/MM/YYYY'
+    ) AS batch_date,
+   
+    // total_qty
+    If(Len(Trim(total_qty)) = 0 OR Match(Upper(total_qty), 'NULL', 'N/A', 'UNKNOWN'),
+        'Unknown',
+        If(Num#(total_qty) < 0, Num#(total_qty) * -1, Num#(total_qty))
+    ) as total_qty_unclean,
+   
+    // good_qty
+    If(Len(Trim(good_qty)) = 0 OR Match(Upper(good_qty), 'NULL', 'N/A', 'UNKNOWN'),
+        'Unknown',
+        If(Num#(good_qty) < 0, Num#(good_qty) * -1, Num#(good_qty))
+    ) as good_qty_unclean,
+   
+    // scrap_qty
+    If(Len(Trim(scrap_qty)) = 0 OR Match(Upper(scrap_qty), 'NULL', 'N/A', 'UNKNOWN'),
+        'Unknown',
+        If(Num#(scrap_qty) < 0, Num#(scrap_qty) * -1, Num#(scrap_qty))
+    ) as scrap_qty_unclean,
+   
+    Timestamp(
+        Alt(
+            Timestamp#(start_ts, 'D/M/YYYY hh:mm:ss'),
+            Timestamp#(start_ts, 'D/M/YYYY hh:mm'),
+            Timestamp#(start_ts, 'YYYY-MM-DD hh:mm:ss'),
+            Timestamp#(start_ts, 'YYYY-MM-DD hh:mm'),
+            Timestamp#(start_ts, 'M/D/YYYY hh:mm:ss'),
+            Timestamp#(start_ts, 'M/D/YYYY hh:mm')
+        ),
+        'DD/MM/YYYY hh:mm:ss'
+    ) AS start_ts,
+
+    /* 3. Standardize End Time */
+    Timestamp(
+        Alt(
+            Timestamp#(end_ts, 'D/M/YYYY hh:mm:ss'),
+            Timestamp#(end_ts, 'D/M/YYYY hh:mm'),
+            Timestamp#(end_ts, 'YYYY-MM-DD hh:mm:ss'),
+            Timestamp#(end_ts, 'YYYY-MM-DD hh:mm'),
+            Timestamp#(end_ts, 'M/D/YYYY hh:mm:ss'),
+            Timestamp#(end_ts, 'M/D/YYYY hh:mm')
+        ),
+        'DD/MM/YYYY hh:mm:ss'
+    ) AS end_ts,
+
+    /* 4. Standardize Created Time */
+    Timestamp(
+        Alt(
+            Timestamp#(created_ts, 'D/M/YYYY hh:mm:ss'),
+            Timestamp#(created_ts, 'D/M/YYYY hh:mm'),
+            Timestamp#(created_ts, 'YYYY-MM-DD hh:mm:ss'),
+            Timestamp#(created_ts, 'YYYY-MM-DD hh:mm'),
+            Timestamp#(created_ts, 'M/D/YYYY hh:mm:ss'),
+            Timestamp#(created_ts, 'M/D/YYYY hh:mm')
+        ),
+        'DD/MM/YYYY hh:mm:ss'
+    ) AS created_ts,
+    source_file as Production_Batches.source_file
+   
+FROM [lib://Capstone Details/production_batches.csv]
+(txt, embedded labels, delimiter is ',', msq);
+
+[Production Batches Cleaned]:
+Load
+	batch_id,
+    [Production_Batches.plant_id],
+    [Production_Batches.machine_id],
+    [Production_Batches.shift_id],
+    batch_date,
+   
+    //total_qty
+    If(
+        total_qty_unclean = 'Unknown'
+        AND good_qty_unclean <> 'Unknown'
+        AND scrap_qty_unclean <> 'Unknown',
+        good_qty_unclean + scrap_qty_unclean,
+
+        If(
+            total_qty_unclean = 'Unknown',
+            0,
+            total_qty_unclean
+        )
+    ) as total_qty,
+
+    // good_qty
+    If(
+        good_qty_unclean = 'Unknown'
+        AND total_qty_unclean <> 'Unknown'
+        AND scrap_qty_unclean <> 'Unknown',
+        total_qty_unclean - scrap_qty_unclean,
+
+        If(
+            good_qty_unclean = 'Unknown',
+            0,
+            good_qty_unclean
+        )
+    ) as good_qty,
+
+    // scrap_qty
+    If(
+        scrap_qty_unclean = 'Unknown'
+        AND total_qty_unclean <> 'Unknown'
+        AND good_qty_unclean <> 'Unknown',
+        total_qty_unclean - good_qty_unclean,
+
+        If(
+            scrap_qty_unclean = 'Unknown',
+            0,
+            scrap_qty_unclean
+        )
+    ) as scrap_qty,
+   
+    start_ts,
+    end_ts,
+    created_ts,
+    [Production_Batches.source_file]
+
+Resident [Production Batches];
+drop table [Production Batches];
+
+Latest_Batch_TS:
+LOAD
+    batch_id,
+    Max(created_ts) as max_created_ts
+RESIDENT [Production Batches Cleaned]
+GROUP BY batch_id;
+
+LEFT JOIN ([Production Batches Cleaned])
+LOAD
+    batch_id,
+    max_created_ts
+RESIDENT Latest_Batch_TS;
+
+[Production Batches Final]:
+NoConcatenate
+LOAD
+    batch_id,
+    [Production_Batches.plant_id],
+    [Production_Batches.machine_id],
+    [Production_Batches.shift_id],
+    batch_date,
+    total_qty,
+    good_qty,
+    scrap_qty,
+    start_ts,
+    end_ts,
+    created_ts,
+    [Production_Batches.source_file]
+RESIDENT [Production Batches Cleaned]
+WHERE created_ts = max_created_ts;
+
+DROP TABLE Latest_Batch_TS;
+DROP TABLE [Production Batches Cleaned];
+
+[Production Batches With Flags]:
+NoConcatenate
+LOAD
+    *,
+   
+    // 1. total_qty != good_qty + scrap_qty
+    If(
+        total_qty <> (good_qty + scrap_qty),
+        1,
+        0
+    ) as improper_balance_flag,
+
+    // 2. scrap_qty > total_qty
+    If(
+        scrap_qty > total_qty,
+        1,
+        0
+    ) as scrap_gt_total_flag,
+    
+    If(
+        Not IsNull(start_ts)
+        AND Not IsNull(end_ts)
+        AND start_ts > end_ts,
+        1,
+        0
+    ) as date_violation_flag
+
+RESIDENT [Production Batches Final];
+
+DROP TABLE [Production Batches Final];
+
+Rename table [Production Batches With Flags] to [FactProductionBatches];
+
+
+
+
+
+[DimShift]:
+LOAD
+    If(IsNull(shift_id) OR Len(Trim(shift_id))=0 OR Upper(Trim(shift_id))='N/A' OR Upper(Trim(shift_id))='NULL', 
+        'UNKNOWN', shift_id) AS shift_id,
+
+    Date(
+        Alt(
+            Date#(shift_date, 'YYYY-MM-DD'),
+            Date#(shift_date, 'D/M/YYYY'),
+            Date#(shift_date, 'M/D/YYYY')
+        ),
+        'DD/MM/YYYY'
+    ) AS shift_date,
+
+    shift_name,
+
+    Timestamp(
+        Alt(
+            Timestamp#(shift_start_ts, 'D/M/YYYY h:mm:ss'),
+            Timestamp#(shift_start_ts, 'M/D/YYYY h:mm:ss'),
+            Timestamp#(shift_start_ts, 'D/M/YYYY h:mm'),
+            Timestamp#(shift_start_ts, 'M/D/YYYY h:mm'),
+            Timestamp#(shift_start_ts, 'D/M/YYYY h::mm::ss'),
+            Timestamp#(shift_start_ts, 'M/D/YYYY h::mm::ss'),
+            Timestamp#(shift_start_ts, 'YYYY-MM-DD h:mm:ss')
+        ),
+        'DD/MM/YYYY hh:mm:ss'
+    ) AS shift_start_ts,
+
+    Timestamp(
+        Alt(
+            Timestamp#(shift_end_ts, 'D/M/YYYY h:mm:ss'),
+            Timestamp#(shift_end_ts, 'M/D/YYYY h:mm:ss'),
+            Timestamp#(shift_end_ts, 'D/M/YYYY h:mm'),
+            Timestamp#(shift_end_ts, 'M/D/YYYY h:mm'),
+            Timestamp#(shift_end_ts, 'D/M/YYYY h::mm::ss'),
+            Timestamp#(shift_end_ts, 'M/D/YYYY h::mm::ss'),
+            Timestamp#(shift_end_ts, 'YYYY-MM-DD h:mm:ss')
+        ),
+        'DD/MM/YYYY hh:mm:ss'
+    ) AS shift_end_ts
+
+FROM [lib://Capstone Details/shift_calendar.csv]
+(txt, codepage is 28592, embedded labels, delimiter is ',', msq);
+
+
+
+Raw_Downtime:
+LOAD
+    downtime_id,
+    If(Len(Trim(plant_id)) = 0 or plant_id = 'N/A' or IsNull(plant_id) or plant_id='NULL', 'UNKNOWN', plant_id) as MD.plant_id,
+    If(Len(Trim(machine_id)) = 0 or machine_id = 'N/A' or IsNull(machine_id) or machine_id = 'NULL', 'UNKNOWN', machine_id) as MD.machine_id,
+    If(Len(Trim(shift_id)) = 0 or shift_id = 'N/A' or IsNull(shift_id) or shift_id='NULL', 'UNKNOWN', shift_id) as shift_id,
+    If(Len(Trim(downtime_reason)) = 0 or downtime_reason = 'N/A' or IsNull(downtime_reason) or downtime_reason = 'UNKNOWN' or downtime_reason='NULL', 'UNKNOWN', downtime_reason) as downtime_reason,
+   
+    // Convert text to numeric timestamps using every possible format match
+    Alt(
+        Timestamp#(downtime_start_ts, 'YYYY-MM-DD HH:mm:ss'),
+        Timestamp#(downtime_start_ts, 'YYYY-MM-DD HH:mm'),
+        Timestamp#(downtime_start_ts, 'DD/MM/YYYY HH:mm:ss'),
+        Timestamp#(downtime_start_ts, 'DD/MM/YYYY HH:mm'),
+        Timestamp#(downtime_start_ts, 'MM/DD/YYYY HH:mm:ss'),
+        Timestamp#(downtime_start_ts, 'MM/DD/YYYY HH:mm'),
+        Timestamp#(downtime_start_ts, 'YYYY/MM/DD HH:mm:ss'),
+        Timestamp#(downtime_start_ts, 'YYYY/MM/DD HH:mm')
+    ) as start_temp,
+   
+    Alt(
+        Timestamp#(downtime_end_ts, 'YYYY-MM-DD HH:mm:ss'),
+        Timestamp#(downtime_end_ts, 'YYYY-MM-DD HH:mm'),
+        Timestamp#(downtime_end_ts, 'DD/MM/YYYY HH:mm:ss'),
+        Timestamp#(downtime_end_ts, 'DD/MM/YYYY HH:mm'),
+        Timestamp#(downtime_end_ts, 'MM/DD/YYYY HH:mm:ss'),
+        Timestamp#(downtime_end_ts, 'MM/DD/YYYY HH:mm'),
+        Timestamp#(downtime_end_ts, 'YYYY/MM/DD HH:mm:ss'),
+        Timestamp#(downtime_end_ts, 'YYYY/MM/DD HH:mm')
+    ) as end_temp,
+
+    Alt(
+        Timestamp#(created_ts, 'YYYY-MM-DD HH:mm:ss'),
+        Timestamp#(created_ts, 'YYYY-MM-DD HH:mm'),
+        Timestamp#(created_ts, 'DD/MM/YYYY HH:mm:ss'),
+        Timestamp#(created_ts, 'DD/MM/YYYY HH:mm'),
+        Timestamp#(created_ts, 'MM/DD/YYYY HH:mm:ss'),
+        Timestamp#(created_ts, 'MM/DD/YYYY HH:mm'),
+        Timestamp#(created_ts, 'YYYY/MM/DD HH:mm:ss'),
+        Timestamp#(created_ts, 'YYYY/MM/DD HH:mm')
+    ) as created_ts_temp,
+   
+    If(Len(Trim(downtime_minutes))=0 or downtime_minutes='-', Null(), Num(downtime_minutes)) as min_temp,
+    source_file as Machines.source_file
+FROM [lib://Capstone Details/machine_downtime.csv]
+(txt, embedded labels, delimiter is ',', msq);
+
+// 2. Calculation Layer: Force formatting and recalculate minutes
+Temp_Sorted:
+NoConcatenate
+LOAD
+    downtime_id,
+    MD.plant_id,
+    MD.machine_id,
+    shift_id,
+    downtime_reason,
+    [Machines.source_file],
+    // Standardize Created_ts format
+    Timestamp(created_ts_temp, 'DD/MM/YYYY HH:mm:ss') as created_ts,
+   
+    // Final Start/End assignment with forced 'DD/MM/YYYY HH:mm:ss' format
+    If(IsNull(start_temp) and not IsNull(end_temp) and not IsNull(min_temp),
+        Timestamp(end_temp - (min_temp/1440), 'DD/MM/YYYY HH:mm:ss'),
+        If(IsNull(start_temp), 'UNKNOWN', Timestamp(start_temp, 'DD/MM/YYYY HH:mm:ss'))) as downtime_start_ts,
+       
+    If(IsNull(end_temp) and not IsNull(start_temp) and not IsNull(min_temp),
+        Timestamp(start_temp + (min_temp/1440), 'DD/MM/YYYY HH:mm:ss'),
+        If(IsNull(end_temp), 'UNKNOWN', Timestamp(end_temp, 'DD/MM/YYYY HH:mm:ss'))) as downtime_end_ts,
+
+    // Recalculate Minutes based on standardized numeric timestamps
+    If(IsNull(min_temp) or min_temp = 0,
+        If(not IsNull(start_temp) and not IsNull(end_temp),
+            Round(Fabs(end_temp - start_temp) * 1440), 0),
+        min_temp) as downtime_minutes,
+        
+    If(start_temp > end_temp, 1, 0) as Is_Negative_duration_flag
+        
+RESIDENT Raw_Downtime
+ORDER BY downtime_id, created_ts_temp DESC;
+
+DROP TABLE Raw_Downtime;
+
+// 3. Final Table (Deduplication)
+machine_downtime_final:
+NoConcatenate
+LOAD
+    downtime_id,
+    MD.plant_id,
+    MD.machine_id,
+    shift_id,
+    downtime_reason,
+    downtime_start_ts,
+    downtime_end_ts,
+    downtime_minutes,
+    Is_Negative_duration_flag,
+    created_ts as machine_downtime.created_ts,
+    If(downtime_minutes > 36, 'Non-Idle machine', 'Idle machine') as machine_flag,
+    [Machines.source_file]
+RESIDENT Temp_Sorted
+WHERE RowNo() = 1 or downtime_id <> Peek(downtime_id);
+
+DROP TABLE Temp_Sorted;
+
+Rename Table machine_downtime_final to [FactMachineDowntime];
+
+
+
+DimDowntimeReason:
+LOAD * INLINE [
+downtime_reason, downtime_category, Planned_Flag
+'Planned Maintenance', 'Planned', 'Yes'
+'Setup', 'Planned', 'Yes'
+'Operator', 'Planned', 'Yes'
+'Quality', 'Unplanned', 'No'
+'Electrical', 'Unplanned', 'No'
+'Material', 'Unplanned', 'No'
+'Mechanical', 'Unplanned', 'No'
+'UNKNOWN', 'UNKNOWN', 'UNKNOWN'
+];
+
+
+
